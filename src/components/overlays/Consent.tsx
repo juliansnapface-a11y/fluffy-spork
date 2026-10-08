@@ -197,8 +197,8 @@ export function PlayerConsent() {
           )}
         </div>
         <div className="sticky-action">
-          <button type="button" className={'btn btn-primary btn-block' + (incomplete ? ' btn-dim' : '')} onClick={st.pcNext}>
-            {btn}
+          <button type="button" className={'btn btn-primary btn-block' + (incomplete || c.busy ? ' btn-dim' : '')} onClick={() => !c.busy && st.pcNext()}>
+            {c.busy ? 'Lagrer …' : btn}
           </button>
         </div>
       </div>
@@ -263,8 +263,8 @@ export function CoachConsent() {
           )}
         </div>
         <div className="sticky-action">
-          <button type="button" className={'btn btn-primary btn-block' + (incomplete ? ' btn-dim' : '')} onClick={st.ccNext}>
-            {c.p === 'no' ? 'Avslutt' : 'Godta og fortsett'}
+          <button type="button" className={'btn btn-primary btn-block' + (incomplete || c.busy ? ' btn-dim' : '')} onClick={st.ccNext}>
+            {c.busy ? 'Lagrer …' : c.p === 'no' ? 'Avslutt' : 'Godta og fortsett'}
           </button>
         </div>
       </div>

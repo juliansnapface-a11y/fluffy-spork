@@ -7,7 +7,6 @@ import {
   firstName,
   fmtAcct,
   fmtDate,
-  inviteCode,
   isEmail,
   iso,
   isPlayed,
@@ -19,18 +18,17 @@ import {
 } from './format';
 import {
   blankFlow,
-  buildLedger,
   COACH,
   defCons,
-  DEFAULT_PRICE,
+  emptyTeam,
   ephemeral,
   freshState,
   LS_KEY,
   newPay,
   seedWithLedger,
-  SUB_ME,
 } from './seed';
-import { codes, coachName, matchTitle, price, shortTeam, teamName } from './selectors';
+import { CodeTakenError, createTeam, joinTeam, saveTeam, teamVersion, uploadImage, type TeamPayload } from './supabase';
+import { coachName, matchTitle, price, shortTeam, teamName } from './selectors';
 import type {
   AppState,
   ConsentKey,
@@ -61,14 +59,16 @@ function loadState(): AppState {
   try {
     s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
   } catch {}
-  if (!s || s.v !== 1) s = freshState();
-  // The "Der jeg er med" filter was removed from the design.
+  if (!s || s.v !== 2) s = freshState();
   if (!['all', 'kamp', 'trening', 'beskjed'].includes(s.filter)) s = { ...s, filter: 'all' };
-  if (!s.data.payments) s = { ...s, data: { ...s.data, payments: buildLedger(s.data.subs, s.data.price ?? DEFAULT_PRICE) } };
   return { ...s, ...ephemeral() };
 }
 
 export interface Actions {
+  /** Fetches the team from the server if it changed. */
+  refresh: () => Promise<void>;
+  /** Opens the subscriber sign-up with a team code from an invite link. */
+  startInvite: (code: string, via: string | null) => void;
   toast: (msg: string) => void;
   toggleTheme: () => void;
   go: (screen: Screen) => void;
@@ -179,7 +179,77 @@ const scrollTop = () => {
 export const useStore = create<Store>()((set, get) => {
   const s = () => get();
   const setFlow = (p: Partial<Flow>) => set((st) => ({ flow: { ...st.flow, ...p } }));
-  const setData = (fn: (d: TeamData) => TeamData) => set((st) => ({ data: fn(st.data) }));
+
+  // ---------- Sync with the shared team document ----------
+  // Local changes are kept as a queue of functions. Each save sends the server's last
+  // document with the queue applied. If someone else saved first, the queue is replayed
+  // on top of their version, so no one's change is lost.
+  let pending: ((d: TeamData) => TeamData)[] = [];
+  let server: TeamData | null = null;
+  let saving = false;
+  let failedOnce = false;
+  const replay = (base: TeamData) =>
+    pending.reduce((d, fn) => {
+      try {
+        return fn(d);
+      } catch {
+        return d;
+      }
+    }, base);
+  const applyServer = (p: TeamPayload) => {
+    server = p.data;
+    set({ version: p.version, data: replay(p.data) });
+  };
+  const flush = async (): Promise<void> => {
+    const team = s().team;
+    if (saving || !pending.length || !team || !server) return;
+    saving = true;
+    try {
+      for (let attempt = 0; attempt < 5 && pending.length; attempt++) {
+        const batch = pending.length;
+        const res = await saveTeam(team.code, s().version, replay(server));
+        if (res.ok) pending = pending.slice(batch);
+        applyServer(res);
+        if (res.ok) break;
+      }
+      failedOnce = false;
+    } catch {
+      if (!failedOnce) toast('Fikk ikke lagret. Prøver igjen …');
+      failedOnce = true;
+      setTimeout(() => void flush(), 4000);
+    } finally {
+      saving = false;
+    }
+    if (pending.length) void flush();
+  };
+  const setData = (fn: (d: TeamData) => TeamData) => {
+    set((st) => ({ data: fn(st.data) }));
+    if (!s().team) return;
+    pending.push(fn);
+    if (server) void flush();
+    else void refresh();
+  };
+  /** Connects this device to a team after looking up its code. */
+  const connect = (p: TeamPayload, code: string) => {
+    pending = [];
+    set({ team: { code: code, role: p.role } });
+    applyServer(p);
+  };
+  const refresh = async () => {
+    const team = s().team;
+    if (!team || saving) return;
+    // With unsaved changes, only fetch if we have never loaded the server copy (e.g. right after a reload).
+    if (server && pending.length) return;
+    try {
+      if (server && (await teamVersion(team.code)) === s().version) return;
+      const p = await joinTeam(team.code);
+      if (!p) return;
+      if (!server || !pending.length) applyServer(p);
+      if (pending.length) void flush();
+    } catch {}
+  };
+  const netError = 'Fikk ikke kontakt. Sjekk nettet og prøv igjen.';
+
   const setForm = (p: AppState['form']) => set((st) => ({ form: { ...st.form, ...p } }));
   const setProf = <R extends keyof Profiles>(r: R, patch: Partial<Profiles[R]>) =>
     set((st) => ({ prof: { ...st.prof, [r]: { ...st.prof[r], ...patch } } }));
@@ -242,8 +312,10 @@ export const useStore = create<Store>()((set, get) => {
     const r = st.flow.role;
     if (st.screen !== 'otp' || !r) return;
     if (st.flow.otp.length !== 6) return setFlow({ err: 'Koden har 6 sifre.' });
-    if (st.onboarded[r] && roleReady(r) && !(r === 'coach' && st.flow.coachMode === 'create')) {
+    const sameTeamRole = !!st.team && (r === 'coach') === (st.team.role === 'coach');
+    if (st.onboarded[r] && sameTeamRole && roleReady(r) && !(r === 'coach' && st.flow.coachMode === 'create')) {
       enterApp(r);
+      void refresh();
       toast('Velkommen tilbake!');
       return;
     }
@@ -256,9 +328,27 @@ export const useStore = create<Store>()((set, get) => {
     go(next[r]);
   };
 
-  const submitTeam = () => {
+  /** Looks up a code on the server while showing a busy state. Returns null (and shows an error) if it fails. */
+  const lookup = async (code: string): Promise<TeamPayload | null> => {
+    setFlow({ busy: true, err: '' });
+    try {
+      const p = await joinTeam(code);
+      setFlow({ busy: false });
+      return p;
+    } catch {
+      setFlow({ busy: false, err: netError });
+      return null;
+    }
+  };
+
+  const submitTeam = async () => {
     const c = s().flow.teamCode.replace(/\s/g, '').toUpperCase();
-    if (c !== codes(s()).team) return setFlow({ err: 'Fant ikke noe lag med den koden.' });
+    if (c.length < 4) return setFlow({ err: 'Skriv inn lagkoden.' });
+    const p = await lookup(c);
+    if (s().flow.err) return;
+    if (!p) return setFlow({ err: 'Fant ikke noe lag med den koden.' });
+    // Players always use the team code, even if someone typed the coach code.
+    connect({ ...p, role: 'member' }, p.data.teamCode || c);
     setFlow({ err: '', pickId: null, search: '' });
     go('pickPlayer');
   };
@@ -278,19 +368,25 @@ export const useStore = create<Store>()((set, get) => {
     }
   };
 
-  const submitInvite = () => {
+  const submitInvite = async () => {
     const raw = s().flow.invite.replace(/\s/g, '').toUpperCase();
     if (raw.length < 4) return setFlow({ err: 'Skriv inn lagkoden.' });
-    const v = s().data.players.find((p) => inviteCode(p) === raw);
-    if (raw !== codes(s()).team && !v) return setFlow({ err: 'Fant ikke noe lag med den koden.' });
-    setFlow({ err: '', inviteVia: v ? v.id : null, terms: false });
+    const p = await lookup(raw);
+    if (s().flow.err) return;
+    if (!p) return setFlow({ err: 'Fant ikke noe lag med den koden.' });
+    connect({ ...p, role: 'member' }, p.data.teamCode || raw);
+    const via = s().flow.inviteVia;
+    setFlow({ err: '', inviteVia: via && p.data.players.some((x) => x.id === via) ? via : null, terms: false });
     go('terms');
   };
 
   const submitTerms = () => {
     const f = s().flow;
+    const name = (f.subName || '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2) return setFlow({ err: 'Skriv inn navnet ditt.' });
     if (!f.inviteVia) return setFlow({ err: 'Velg hvem som vervet deg.' });
     if (!f.terms) return setFlow({ err: 'Du må godta vilkårene for å fortsette.' });
+    setProf('sub', { name });
     setFlow({ err: '' });
     set({ pay: newPay() });
     go('pay');
@@ -298,22 +394,25 @@ export const useStore = create<Store>()((set, get) => {
 
   const hasFullName = (n?: string) => (n || '').trim().split(/\s+/).length >= 2;
 
-  const submitCoach = () => {
+  const submitCoach = async () => {
     const f = s().flow;
     const c = f.coachCode.replace(/\s/g, '').toUpperCase();
-    if (c !== codes(s()).coach) return setFlow({ err: 'Koden stemmer ikke. Spør en annen trener på laget.' });
     if (!hasFullName(f.coachName)) return setFlow({ err: 'Skriv inn fornavn og etternavn.' });
+    if (c.length < 4) return setFlow({ err: 'Skriv inn trenerkoden.' });
+    const p = await lookup(c);
+    if (s().flow.err) return;
+    if (!p || p.role !== 'coach') return setFlow({ err: 'Koden stemmer ikke. Spør en annen trener på laget.' });
+    connect(p, c);
     set({ pcons: { step: 1, coach: true, mode: 'join', p: null, ps: null, err: '' } });
     setFlow({ err: '' });
     go('cconsent');
-    toast('Velkommen, trener!');
   };
 
   const submitCreateTeam = () => {
     const f = s().flow;
     const n = (f.teamName || '').trim().replace(/\s+/g, ' ');
-    const cc = (f.newCoachCode || '').trim();
-    const tc = (f.newTeamCode || '').trim();
+    const cc = (f.newCoachCode || '').trim().toUpperCase();
+    const tc = (f.newTeamCode || '').trim().toUpperCase();
     if (!hasFullName(f.coachName)) return setFlow({ err: 'Skriv inn ditt fornavn og etternavn.' });
     if (n.length < 2) return setFlow({ err: 'Skriv inn navnet på laget.' });
     if (cc.length < 4) return setFlow({ err: 'Trenerkoden må ha minst 4 tegn.' });
@@ -324,23 +423,26 @@ export const useStore = create<Store>()((set, get) => {
     go('cconsent');
   };
 
-  const pcFinish = (ok: boolean, by: 'player' | 'parent' | null) => {
+  /** Uploads a signature drawn on the canvas. Falls back to keeping it inline if the upload fails. */
+  const storeSignature = async (sig: string | null | undefined) => {
+    if (!sig || !sig.startsWith('data:')) return sig || null;
+    try {
+      return await uploadImage(sig);
+    } catch {
+      return sig;
+    }
+  };
+
+  const pcFinish = async (ok: boolean, by: 'player' | 'parent' | null) => {
     const st = s();
     const c = st.pcons || ({} as SignedForm);
     const id = st.prof.player.playerId;
+    setPC({ busy: true });
+    const [playerSig, parentSig] = ok ? await Promise.all([storeSignature(c.ps), c.adult ? null : storeSignature(c.gs)]) : [null, null];
     if (id)
       updPlayer(id, {
         consent: ok
-          ? {
-              photo: true,
-              video: true,
-              name: true,
-              tag: true,
-              at: Date.now(),
-              adult: !!c.adult,
-              playerSig: c.ps || null,
-              parentSig: c.adult ? null : c.gs || null,
-            }
+          ? { photo: true, video: true, name: true, tag: true, at: Date.now(), adult: !!c.adult, playerSig, parentSig }
           : null,
         declined: ok ? null : by,
       });
@@ -373,25 +475,28 @@ export const useStore = create<Store>()((set, get) => {
           payments: paid ? L : [...L, { id: 'pay' + id + now, subId: id, name, at: now, amount, team }],
         };
       });
+    const subName = st.prof.sub.name || 'Abonnent';
     if (ctx === 'flow') {
       const via = st.flow.inviteVia || st.data.players[0]?.id || null;
       setProf('sub', { viaId: via, active: true, cancelled: false, method: p.method, last4, startedAt: now, autoRenew });
-      addSub('me-sub', SUB_ME, 'farmor', via);
+      addSub(mySubId(), subName, '', via);
       enterApp('sub');
-      toast('Betalingen er fullført. Velkommen!');
+      toast('Velkommen! Du følger nå laget.');
     } else if (ctx === 'parent') {
       const c = st.data.players.find((x) => x.id === st.prof.parent.childId);
       setProf('parent', { subscribed: true });
-      addSub('me-parent', c ? c.parent.name : 'Foresatt', 'forelder', c ? c.id : null);
+      addSub('par-' + st.uid, c ? c.parent.name || 'Foresatt' : 'Foresatt', 'forelder', c ? c.id : null);
       set({ payCtx: null, pay: null });
       toast('Nå følger du hele laget!');
     } else {
       setProf('sub', { active: true, cancelled: false, method: p.method, last4, startedAt: now, autoRenew });
-      addSub('me-sub', SUB_ME, 'farmor', st.prof.sub.viaId);
+      addSub(mySubId(), subName, '', st.prof.sub.viaId);
       set({ payCtx: null, pay: null });
       toast('Abonnementet er i gang igjen');
     }
   };
+
+  const mySubId = () => 'sub-' + s().uid;
 
   const mkPlayer = (players: Player[], name: string): Player => ({
     id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -406,6 +511,11 @@ export const useStore = create<Store>()((set, get) => {
   return {
     ...loadState(),
 
+    refresh,
+    startInvite: (code, via) => {
+      set({ flow: { ...blankFlow(), role: 'sub', invite: code.toUpperCase(), inviteVia: via } });
+      go('invite');
+    },
     toast,
     go,
     setFlow,
@@ -576,10 +686,11 @@ export const useStore = create<Store>()((set, get) => {
         pcons: { step: 1, adult: pc ? pc.adult !== false : !!st.flow.adult, p: null, g: null, ps: null, gs: null, err: '' },
       });
     },
-    ccNext: () => {
+    ccNext: async () => {
       const st = s();
       const c = st.pcons;
       if (!c?.p) return setPC({ err: 'Velg ett av alternativene.' });
+      if (c.busy) return;
       if (c.p === 'no') {
         set({ pcons: null, flow: blankFlow() });
         go('role');
@@ -587,32 +698,29 @@ export const useStore = create<Store>()((set, get) => {
         return;
       }
       if (!c.ps) return setPC({ err: 'Skriv signaturen din i feltet.' });
+      setPC({ busy: true });
       const cn = (st.flow.coachName || '').trim().replace(/\s+/g, ' ') || COACH;
-      setProf('coach', { name: cn });
-      const rec = { id: 'cc' + Date.now(), name: cn, contact: st.flow.contact || '', at: Date.now(), sig: c.ps, mode: c.mode || 'join' };
+      const sig = (await storeSignature(c.ps)) || '';
+      const rec = { id: 'cc' + Date.now(), name: cn, contact: st.flow.contact || '', at: Date.now(), sig, mode: c.mode || 'join' };
       if (c.mode === 'create' && c.pending) {
         const { n, cc, tc } = c.pending;
-        setData((d) => ({
-          ...d,
-          teamName: n,
-          coachCode: cc,
-          teamCode: tc,
-          players: [],
-          posts: [],
-          matches: [],
-          subs: [],
-          payments: [],
-          notifs: [],
-          reminders: {},
-          reports: [],
-          coachConsents: [rec],
-        }));
+        try {
+          const p = await createTeam(n, cc, tc, { ...emptyTeam(), coachConsents: [rec] });
+          connect(p, cc);
+        } catch (e) {
+          set({ pcons: null });
+          go('createTeam');
+          setFlow({ err: e instanceof CodeTakenError ? 'En av kodene er allerede i bruk. Velg andre koder.' : netError });
+          return;
+        }
+        setProf('coach', { name: cn });
         set({ pcons: null });
         enterApp('coach');
         set({ tab: 'min' });
         toast(n + ' er opprettet. Legg inn spillerne.');
         return;
       }
+      setProf('coach', { name: cn });
       setData((d) => ({ ...d, coachConsents: [...(d.coachConsents || []), rec] }));
       set({ pcons: null });
       enterApp('coach');
@@ -680,8 +788,7 @@ export const useStore = create<Store>()((set, get) => {
       scrollTop();
     },
     toggleLike: (id) => {
-      const r = s().role;
-      if (!r) return;
+      const r = s().uid;
       setData((d) => ({
         ...d,
         posts: d.posts.map((p) =>
@@ -700,7 +807,7 @@ export const useStore = create<Store>()((set, get) => {
     },
     openSheet: (sheet) => set({ sheet }),
     closeSheet: () => {
-      if (s().sheet === 'notifs') setData((d) => ({ ...d, notifs: d.notifs.map((n) => ({ ...n, read: true })) }));
+      if (s().sheet === 'notifs') set({ seenNotifsAt: Date.now() });
       set({ sheet: null, confirm: null, menuPost: null });
     },
     doConfirm: () => {
@@ -835,10 +942,12 @@ export const useStore = create<Store>()((set, get) => {
           out.push({
             id: 'img' + Date.now() + Math.random().toString(36).slice(2, 6),
             kind: 'photo' as const,
-            src: await resizeImage(f),
+            src: await uploadImage(await resizeImage(f)),
             label: 'bilde',
           });
-        } catch {}
+        } catch {
+          toast('Fikk ikke lastet opp ett av bildene. Prøv igjen.');
+        }
       }
       set((st) => ({ draft: st.draft ? { ...st.draft, loading: false, media: [...st.draft.media, ...out] } : st.draft }));
     },
@@ -952,10 +1061,15 @@ export const useStore = create<Store>()((set, get) => {
       );
     },
     resetDemo: () =>
-      ask('Laste inn demodata?', 'Laget erstattes med demolaget Solberg IL G12 med 40 spillere, innlegg, kamper og abonnenter.', 'Last inn', () => {
-        setData(() => seedWithLedger());
-        toast('Demodata er lastet inn');
-      }),
+      ask(
+        'Laste inn eksempeldata?',
+        'Laget fylles med 40 eksempelspillere, innlegg, kamper og abonnenter. Det som ligger der nå, erstattes for alle på laget.',
+        'Last inn',
+        () => {
+        setData((d) => ({ ...seedWithLedger(), teamName: d.teamName, teamCode: d.teamCode, coachCode: d.coachCode, coachConsents: d.coachConsents }));
+        toast('Eksempeldata er lastet inn');
+        },
+      ),
 
     // ---------- Subscriber / family ----------
 
@@ -967,7 +1081,7 @@ export const useStore = create<Store>()((set, get) => {
         'Si opp',
         () => {
           setProf('sub', { cancelled: true });
-          setData((d) => ({ ...d, subs: d.subs.filter((x) => x.id !== 'me-sub') }));
+          setData((d) => ({ ...d, subs: d.subs.filter((x) => x.id !== mySubId()) }));
           toast('Abonnementet er sagt opp');
         },
       );

@@ -1,8 +1,8 @@
 'use client';
 
 import type { FormEvent, ReactNode } from 'react';
-import { CKEYS, ROLE_SWITCHER, SUB_ME, TYPES } from '@/lib/seed';
-import { firstName, fmtShort, initials, inviteCode, nextChargeText, rel, stripe } from '@/lib/format';
+import { CKEYS, ROLE_SWITCHER, TYPES } from '@/lib/seed';
+import { firstName, fmtShort, initials, inviteLink, nextChargeText, rel, stripe } from '@/lib/format';
 import { codes, coachName, matchTitle, playerMap, priceText, teamName } from '@/lib/selectors';
 import { useStore } from '@/lib/store';
 import type { Consent, Player } from '@/lib/types';
@@ -15,7 +15,6 @@ export const METHOD_NAMES = (last4: string) => ({
   vipps: 'Vipps',
 });
 
-const inviteLink = (p: Player) => 'https://innercircle.no/i/' + inviteCode(p);
 
 function Section({ title, aside, children }: { title: ReactNode; aside?: ReactNode; children: ReactNode }) {
   return (
@@ -65,7 +64,7 @@ function InviteLinkBox({ link }: { link: string }) {
   const copyInvite = useStore((s) => s.copyInvite);
   return (
     <div className="linkbox">
-      <span className="linkbox-url">{link.replace('https://', '')}</span>
+      <span className="linkbox-url">{link.replace(/^https?:\/\//, '')}</span>
       <button type="button" className="link-btn" style={{ padding: '0 8px' }} onClick={() => copyInvite(link)}>
         {copied ? 'Kopiert' : 'Kopier'}
       </button>
@@ -83,7 +82,7 @@ export function MinSide() {
   const team = teamName(st);
 
   const name =
-    role === 'coach' ? coachName(st) : role === 'player' ? me?.name || 'Spiller' : role === 'parent' ? child?.parent.name || 'Foresatt' : SUB_ME;
+    role === 'coach' ? coachName(st) : role === 'player' ? me?.name || 'Spiller' : role === 'parent' ? child?.parent.name || 'Foresatt' : prof.sub.name || 'Abonnent';
   const subtitle =
     role === 'coach'
       ? 'Trener · ' + team
@@ -140,7 +139,7 @@ export function MinSide() {
         <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 8 }}>
           {role === 'coach' && (
             <button type="button" className="link-btn quiet" onClick={st.resetDemo}>
-              Last inn demodata
+              Last inn eksempeldata
             </button>
           )}
           <button type="button" className="link-btn quiet" onClick={st.logout}>
@@ -233,7 +232,7 @@ function CoachSections() {
 function SubSections() {
   const st = useStore();
   const sub = st.prof.sub;
-  const mine = (st.data.payments || []).filter((p) => p.subId === 'me-sub');
+  const mine = (st.data.payments || []).filter((p) => p.subId === 'sub-' + st.uid);
   const nf = sub.notify || { posts: true, matches: true, results: true };
   const setN = (k: keyof typeof nf) => () => st.setProf('sub', { notify: { ...nf, [k]: !nf[k] } });
   const methodText =
@@ -291,7 +290,7 @@ function followText(n: number) {
 function PlayerSections({ me }: { me: Player }) {
   const st = useStore();
   const c = me.consent;
-  const link = inviteLink(me);
+  const link = inviteLink(codes(st).team, me);
   const nVia = st.data.subs.filter((x) => x.via === me.id).length;
   const text = c
     ? 'Du har signert samtykket' + (c.adult === false ? ', og en foresatt har også signert' : '') + '. Du kan ombestemme deg når som helst.'
@@ -328,7 +327,7 @@ function ParentSections({ child }: { child: Player }) {
   const cc = child.consent;
   const nOn = CKEYS.filter(([k]) => cc?.[k]).length;
   const age = child.born ? new Date().getFullYear() - child.born : null;
-  const link = inviteLink(child);
+  const link = inviteLink(codes(st).team, child);
   const posts = data.posts.filter((p) => p.tagged.includes(child.id)).sort((x, y) => y.ts - x.ts);
   const family = data.subs.filter((x) => x.via === child.id);
   const tooYoung = age != null && age < 13;

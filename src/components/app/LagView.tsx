@@ -1,8 +1,8 @@
 'use client';
 
 import { homeAway, splitMatches, visiblePosts } from '@/lib/derive';
-import { firstName, inviteCode, nextChargeText } from '@/lib/format';
-import { matchTitle, playerMap, priceText, teamName } from '@/lib/selectors';
+import { firstName, inviteLink, nextChargeText } from '@/lib/format';
+import { codes, matchTitle, playerMap, priceText, teamName } from '@/lib/selectors';
 import { useStore } from '@/lib/store';
 import type { AppState, Player, Post } from '@/lib/types';
 import { DateCol, Icon, Tabs } from '../ui';
@@ -40,7 +40,7 @@ export function LagView() {
   const me = role === 'player' ? P[prof.player.playerId || ''] : undefined;
   const parentFree = role === 'parent' && !prof.parent.subscribed;
   const childFirst = child ? firstName(child.name) : 'barnet';
-  const unread = data.notifs.filter((n) => !n.read && !(isCoach && n.from === 'coach')).length;
+  const unread = data.notifs.filter((n) => n.ts > st.seenNotifsAt && !(isCoach && n.from === 'coach')).length;
   const { next } = splitMatches(data.matches);
   const price = priceText(st);
 
@@ -154,7 +154,7 @@ export function LagView() {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => me && st.shareInvite('https://innercircle.no/i/' + inviteCode(me))}
+            onClick={() => me && st.shareInvite(inviteLink(codes(st).team, me))}
           >
             Del lenke
           </button>

@@ -23,6 +23,33 @@ export default function InnerCircleApp() {
 
   useEffect(() => startPersistence(), []);
 
+  // Pick up changes others make: check every 8 seconds and whenever the app comes back into view.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void useStore.getState().refresh();
+    };
+    refresh();
+    const t = setInterval(refresh, 8000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  // Invite links look like /?lag=TEAMCODE&via=PLAYERID and open the subscriber sign-up.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const code = q.get('lag');
+    if (!code) return;
+    window.history.replaceState(null, '', window.location.pathname);
+    const st = useStore.getState();
+    const alreadyFollowing = st.screen === 'app' && st.role === 'sub' && st.data.teamCode === code.toUpperCase();
+    if (!alreadyFollowing) st.startInvite(code, q.get('via'));
+  }, []);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
