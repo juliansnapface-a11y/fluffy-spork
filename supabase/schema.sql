@@ -95,7 +95,7 @@ declare
   c text := ic_norm(p_code);
   t teams;
   r text;
-  old jsonb;
+  prev jsonb;
   merged jsonb;
   k text;
 begin
@@ -115,9 +115,9 @@ begin
   merged := coalesce(p_data, '{}'::jsonb) - 'coachCode' - 'teamCode' - 'teamName';
 
   if r = 'member' then
-    old := t.data;
+    prev := t.data;
     foreach k in array array['matches', 'price', 'payout', 'coachConsents', 'notifs', 'reminders', 'reports', 'ytdBase', 'account'] loop
-      if old ? k then merged := jsonb_set(merged, array[k], old -> k); else merged := merged - k; end if;
+      if (prev -> k) is not null then merged := jsonb_set(merged, array[k], prev -> k); else merged := merged - k; end if;
     end loop;
 
     -- Posts: same posts as before; only hearts and tags (a parent removing their child) may change.
@@ -125,10 +125,10 @@ begin
       select jsonb_agg(
         case when np.v is null then op.v
         else op.v || jsonb_build_object(
-          'likedBy', coalesce(np.v -> 'likedBy', op.v -> 'likedBy'),
-          'tagged', coalesce(np.v -> 'tagged', op.v -> 'tagged'))
+          'likedBy', coalesce(np.v -> 'likedBy', op.v -> 'likedBy', '[]'::jsonb),
+          'tagged', coalesce(np.v -> 'tagged', op.v -> 'tagged', '[]'::jsonb))
         end order by op.ord)
-      from jsonb_array_elements(coalesce(old -> 'posts', '[]'::jsonb)) with ordinality op(v, ord)
+      from jsonb_array_elements(coalesce(prev -> 'posts', '[]'::jsonb)) with ordinality op(v, ord)
       left join jsonb_array_elements(coalesce(p_data -> 'posts', '[]'::jsonb)) np(v) on np.v ->> 'id' = op.v ->> 'id'
     ), '[]'::jsonb));
 
@@ -140,7 +140,7 @@ begin
           select jsonb_object_agg(e.key, e.value) from jsonb_each(np.v) e
           where e.key in ('consent', 'declined', 'selfLogin')), '{}'::jsonb)
         end order by op.ord)
-      from jsonb_array_elements(coalesce(old -> 'players', '[]'::jsonb)) with ordinality op(v, ord)
+      from jsonb_array_elements(coalesce(prev -> 'players', '[]'::jsonb)) with ordinality op(v, ord)
       left join jsonb_array_elements(coalesce(p_data -> 'players', '[]'::jsonb)) np(v) on np.v ->> 'id' = op.v ->> 'id'
     ), '[]'::jsonb));
   end if;
