@@ -37,13 +37,23 @@ language sql stable as $$
   )
 $$;
 
+create or replace function public.ic_insert_team(p_name text, p_team_code text, p_coach_code text, p_data jsonb)
+returns jsonb
+language sql security definer set search_path = public as $$
+  with ins as (
+    insert into teams (name, team_code, coach_code, data)
+    values (trim(p_name), p_team_code, p_coach_code, coalesce(p_data, '{}'::jsonb) - 'coachCode' - 'teamCode')
+    returning *
+  )
+  select ic_payload(ins, 'coach') from ins
+$$;
+
 create or replace function public.create_team(p_name text, p_coach_code text, p_team_code text, p_data jsonb)
 returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   cc text := ic_norm(p_coach_code);
   tc text := ic_norm(p_team_code);
-  t teams;
 begin
   if length(cc) < 4 or length(tc) < 4 or cc = tc then
     raise exception 'invalid_codes';
@@ -51,10 +61,7 @@ begin
   if exists (select 1 from teams where team_code in (cc, tc) or coach_code in (cc, tc)) then
     raise exception 'code_taken';
   end if;
-  insert into teams (name, team_code, coach_code, data)
-  values (trim(p_name), tc, cc, coalesce(p_data, '{}'::jsonb) - 'coachCode' - 'teamCode')
-  returning * into t;
-  return ic_payload(t, 'coach');
+  return ic_insert_team(p_name, tc, cc, p_data);
 end $$;
 
 create or replace function public.join_team(p_code text)
@@ -64,10 +71,10 @@ declare
   c text := ic_norm(p_code);
   t teams;
 begin
-  select * into t from teams where coach_code = c;
-  if found then return ic_payload(t, 'coach'); end if;
-  select * into t from teams where team_code = c;
-  if found then return ic_payload(t, 'member'); end if;
+  t := (select x from teams x where x.coach_code = c);
+  if t.id is not null then return ic_payload(t, 'coach'); end if;
+  t := (select x from teams x where x.team_code = c);
+  if t.id is not null then return ic_payload(t, 'member'); end if;
   return null;
 end $$;
 
@@ -92,12 +99,12 @@ declare
   merged jsonb;
   k text;
 begin
-  select * into t from teams where coach_code = c for update;
-  if found then
+  t := (select x from teams x where x.coach_code = c for update);
+  if t.id is not null then
     r := 'coach';
   else
-    select * into t from teams where team_code = c for update;
-    if not found then raise exception 'unknown_team'; end if;
+    t := (select x from teams x where x.team_code = c for update);
+    if t.id is null then raise exception 'unknown_team'; end if;
     r := 'member';
   end if;
 
@@ -138,11 +145,12 @@ begin
     ), '[]'::jsonb));
   end if;
 
-  update teams set data = merged, version = version + 1, updated_at = now()
-  where id = t.id returning * into t;
+  update teams set data = merged, version = version + 1, updated_at = now() where id = t.id;
+  t := (select x from teams x where x.id = t.id);
   return ic_payload(t, r) || jsonb_build_object('ok', true);
 end $$;
 
+revoke all on function public.ic_insert_team(text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.create_team(text, text, text, jsonb) from public;
 revoke all on function public.join_team(text) from public;
 revoke all on function public.team_version(text) from public;
