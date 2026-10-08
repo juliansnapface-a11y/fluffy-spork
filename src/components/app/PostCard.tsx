@@ -10,6 +10,7 @@ import { Icon } from '../ui';
 
 export function PostCard({ post, P }: { post: Post; P: Record<string, Player> }) {
   const role = useStore((s) => s.role);
+  const uid = useStore((s) => s.uid);
   const dark = useStore((s) => s.theme === 'dark');
   const match = useStore((s) => (post.matchId ? s.data.matches.find((m) => m.id === post.matchId) : undefined));
   const resultTitle = useStore((s) => (match && post.type === 'kamp' && outcomeOf(match) ? scoreTitle(s, match) : ''));
@@ -20,7 +21,7 @@ export function PostCard({ post, P }: { post: Post; P: Record<string, Player> })
   useEffect(() => () => clearTimeout(popTimer.current), []);
 
   const outcome = resultTitle && match ? outcomeOf(match) : null;
-  const liked = !!role && post.likedBy.includes(role);
+  const liked = post.likedBy.includes(uid);
   const canEdit = role === 'coach' && post.authorId === 'coach';
 
   const tagged = post.tagged.map((id) => P[id]).filter(Boolean);

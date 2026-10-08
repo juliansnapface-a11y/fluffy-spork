@@ -49,8 +49,11 @@ export const initials = (n: string) =>
     .toUpperCase();
 export const firstName = (n: string) => (n || '').split(' ')[0];
 
-export const inviteCode = (p: Player) =>
-  ascii(firstName(p.name)).toUpperCase() + '-' + (4821 + ((parseInt(p.id.replace(/\D/g, ''), 10) * 137) % 5000));
+/** Link family members open to subscribe. Prefills the team code and who invited them. */
+export const inviteLink = (teamCode: string, p: Player) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return origin + '/?lag=' + encodeURIComponent(teamCode) + '&via=' + encodeURIComponent(p.id);
+};
 
 /** Kroner with up to two decimals. */
 export const krd = (n: number) =>

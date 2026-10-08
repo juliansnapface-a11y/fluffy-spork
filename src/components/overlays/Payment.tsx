@@ -113,6 +113,7 @@ export function Payment() {
             {p.err}
           </p>
         )}
+        <p className="note">Dette er en testversjon. Ingen penger blir trukket.</p>
         <div className="spacer" />
         <button type="submit" className="btn btn-primary btn-block">
           {p.busy ? 'Behandler …' : 'Betal ' + priceText(st)}

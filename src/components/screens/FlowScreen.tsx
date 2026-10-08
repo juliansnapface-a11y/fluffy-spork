@@ -2,8 +2,8 @@
 
 import type { FormEvent } from 'react';
 import { NB } from '@/lib/format';
-import { DEMO_HINTS, ROLES } from '@/lib/seed';
-import { codes, teamName } from '@/lib/selectors';
+import { ROLES } from '@/lib/seed';
+import { teamName } from '@/lib/selectors';
 import { useStore } from '@/lib/store';
 import type { Screen } from '@/lib/types';
 import { Checkbox, ChevronRow, Field, Icon, TopBar } from '../ui';
@@ -47,13 +47,14 @@ export function FlowScreen() {
     screen === 'login' || screen === 'otp' ? (flow.role ? ROLES[flow.role] : '') + ' · Logg inn' : STEP_LABELS[screen] || '';
   const btn = BUTTONS[screen];
   const dim =
+    !!flow.busy ||
     (screen === 'otp' && flow.otp.length < 6) ||
     (screen === 'pickPlayer' && !flow.pickId) ||
     (screen === 'terms' && (!flow.terms || !flow.inviteVia));
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    flowSubmit();
+    if (!flow.busy) flowSubmit();
   };
 
   return (
@@ -73,7 +74,7 @@ export function FlowScreen() {
         {btn && (
           <div className="sticky-action">
             <button type="submit" className={'btn btn-primary btn-block' + (dim ? ' btn-dim' : '')}>
-              {btn}
+              {flow.busy ? 'Sjekker koden …' : btn}
             </button>
           </div>
         )}
@@ -114,7 +115,7 @@ function FlowInput({
   field,
   format,
   ...rest
-}: { field: 'contact' | 'teamCode' | 'invite' | 'coachCode' | 'coachName' | 'teamName' | 'newCoachCode' | 'newTeamCode' | 'search'; format?: (v: string) => string } & Omit<
+}: { field: 'contact' | 'teamCode' | 'invite' | 'coachCode' | 'coachName' | 'teamName' | 'newCoachCode' | 'newTeamCode' | 'search' | 'subName'; format?: (v: string) => string } & Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
   'value' | 'onChange'
 >) {
@@ -130,14 +131,6 @@ function FlowInput({
   );
 }
 
-function DemoHint({ code, onFill }: { code: string; onFill: () => void }) {
-  if (!DEMO_HINTS) return null;
-  return (
-    <button type="button" className="link-btn hint start" onClick={onFill}>
-      Demo: bruk {code}
-    </button>
-  );
-}
 
 function Intro({ title, text }: { title: string; text: string }) {
   return (
@@ -220,15 +213,12 @@ function Otp() {
 }
 
 function TeamCode() {
-  const team = useStore((s) => codes(s).team);
-  const setFlow = useStore((s) => s.setFlow);
   return (
     <>
       <Intro title="Lagkode" text="Lagkoden får du av treneren." />
       <Field label="Lagkode">
         <FlowInput field="teamCode" format={upper} autoFocus autoCapitalize="characters" placeholder="F.eks. SOLBERG12" />
       </Field>
-      <DemoHint code={team} onFill={() => setFlow({ teamCode: team, err: '' })} />
     </>
   );
 }
@@ -270,15 +260,12 @@ function PickPlayer() {
 }
 
 function Invite() {
-  const team = useStore((s) => codes(s).team);
-  const setFlow = useStore((s) => s.setFlow);
   return (
     <>
       <Intro title="Lagkode" text="Lagkoden får du av en spiller på laget eller av treneren." />
       <Field label="Lagkode">
         <FlowInput field="invite" format={upper} autoFocus autoCapitalize="characters" placeholder="F.eks. SOLBERG12" />
       </Field>
-      <DemoHint code={team} onFill={() => setFlow({ invite: team, err: '' })} />
     </>
   );
 }
@@ -293,6 +280,9 @@ function Terms() {
     <>
       <p style={{ margin: 0, font: '500 14px var(--body)', color: 'var(--ok)' }}>Lagkode godkjent · {name}</p>
       <h1 className="h1">Før du starter</h1>
+      <Field label="Ditt navn" hint="Treneren og familien ser navnet ditt i lista over dem som følger laget.">
+        <FlowInput field="subName" autoComplete="name" placeholder="Fornavn og etternavn" />
+      </Field>
       <Field label="Hvem ble du vervet av?" hint="Spilleren som inviterte deg. Du ser fortsatt hele laget.">
         <select className="input" value={flow.inviteVia || ''} onChange={(e) => setFlow({ inviteVia: e.target.value || null, err: '' })}>
           <option value="">Velg spiller …</option>
@@ -338,8 +328,6 @@ function CoachNameField() {
 }
 
 function CoachCode() {
-  const coach = useStore((s) => codes(s).coach);
-  const setFlow = useStore((s) => s.setFlow);
   return (
     <>
       <Intro title="Trenerkode" text="Trenerkoden får du av en annen trener på laget." />
@@ -347,7 +335,6 @@ function CoachCode() {
       <Field label="Trenerkode">
         <FlowInput field="coachCode" format={upper} autoFocus autoCapitalize="characters" placeholder="F.eks. SOLBERG-TRENER" />
       </Field>
-      <DemoHint code={coach} onFill={() => setFlow({ coachCode: coach, err: '' })} />
     </>
   );
 }

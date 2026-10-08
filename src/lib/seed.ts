@@ -15,15 +15,12 @@ import type {
   TeamData,
 } from './types';
 
-export const LS_KEY = 'innercircle.demo.v1';
-export const DEFAULT_TEAM = 'Solberg IL G12';
-export const TEAM_CODE = 'SOLBERG12';
-export const COACH_CODE = 'TRENER-G12';
-export const SUB_ME = 'Randi Hansen';
-export const COACH = 'Kari Lund';
+export const LS_KEY = 'innercircle.v2';
+export const DEFAULT_TEAM = 'Laget';
+export const COACH = 'Trener';
 export const DEFAULT_PRICE = 20;
 
-/** Show tappable demo codes on login steps. */
+/** Show the test-payment hint on the payment screen. */
 export const DEMO_HINTS = true;
 /** Show "Bytt rolle" and "Last inn demodata" on Min side. */
 export const ROLE_SWITCHER = true;
@@ -116,13 +113,13 @@ export function seed(): TeamData {
         tagged: [], likes: 7, likedBy: [],
       },
       {
-        id: 'post2', type: 'kamp', authorId: 'coach', author: COACH, authorRole: 'Trener', ts: now - 2 * DAY + 5 * HOUR, matchId: 'm4',
+        id: 'post2', type: 'kamp', authorId: 'coach', author: 'Kari Lund', authorRole: 'Trener', ts: now - 2 * DAY + 5 * HOUR, matchId: 'm4',
         media: [ph('a1', 350, 'kampbilde'), ph('a2', 20, 'målscoring'), ph('a3', 200, 'jubel'), ph('a4', 40, 'lagbilde')],
         text: 'For en snuoperasjon! Under 0–2 ved pause, men gutta ga seg aldri. Emil satte vinnermålet i siste minutt.',
         tagged: ['p1', 'p2', 'p3'], likes: 24, likedBy: [],
       },
       {
-        id: 'post3', type: 'trening', authorId: 'coach', author: COACH, authorRole: 'Trener', ts: now - 4 * DAY, matchId: null,
+        id: 'post3', type: 'trening', authorId: 'coach', author: 'Kari Lund', authorRole: 'Trener', ts: now - 4 * DAY, matchId: null,
         media: [vid('b1', 150, '0:24'), ph('b2', 190, 'treningsbilde')],
         text: 'Pasningsøvelser i regnet. Fin innsats fra alle i dag!', tagged: ['p1', 'p4'], likes: 15, likedBy: [],
       },
@@ -132,7 +129,7 @@ export function seed(): TeamData {
         text: 'Rettferdig poengdeling i Skedsmohallen. Oliver med en kjempeparade i andre omgang.', tagged: ['p5', 'p6', 'p1'], likes: 31, likedBy: [],
       },
       {
-        id: 'post5', type: 'kamp', authorId: 'coach', author: COACH, authorRole: 'Trener', ts: now - 15 * DAY + 4 * HOUR, matchId: 'm6',
+        id: 'post5', type: 'kamp', authorId: 'coach', author: 'Kari Lund', authorRole: 'Trener', ts: now - 15 * DAY + 4 * HOUR, matchId: 'm6',
         media: [ph('d1', 120, 'hattrick'), ph('d2', 10, 'lagbilde')],
         text: 'Videre i cupen etter 4–0 mot Fet. Isak med hattrick!', tagged: ['p8', 'p9'], likes: 19, likedBy: [],
       },
@@ -165,6 +162,28 @@ export function buildLedger(subs: Subscriber[], price: number): Payment[] {
   }
   return out;
 }
+
+/** A new team with nothing in it yet. */
+export const emptyTeam = (): TeamData => ({
+  players: [],
+  matches: [],
+  posts: [],
+  subs: [],
+  notifs: [],
+  payments: [],
+  account: { connected: false, bank: '', number: '' },
+  ytdBase: 0,
+  reminders: {},
+  reports: [],
+});
+
+const newId = () => {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2);
+  }
+};
 
 export function seedWithLedger(): TeamData {
   const d = seed();
@@ -203,7 +222,11 @@ export function freshState(): PersistedState {
     dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   } catch {}
   return {
-    v: 1,
+    v: 2,
+    uid: newId(),
+    team: null,
+    version: 0,
+    seenNotifsAt: 0,
     theme: dark ? 'dark' : 'light',
     screen: 'role',
     flow: blankFlow(),
@@ -231,8 +254,8 @@ export function freshState(): PersistedState {
     filter: 'all',
     kampTab: 'upcoming',
     openMatch: null,
-    notifyMatch: { m1: true },
-    data: seedWithLedger(),
+    notifyMatch: {},
+    data: emptyTeam(),
   };
 }
 
