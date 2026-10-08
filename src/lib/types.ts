@@ -162,6 +162,8 @@ export interface Flow {
   newTeamCode: string;
   subName?: string;
   busy?: boolean;
+  /** Team found from a code, before joining it. */
+  peek?: { code: string; teamName: string; isCoachCode: boolean; players: { id: string; name: string }[] } | null;
   err: string;
 }
 
@@ -251,12 +253,16 @@ export interface Confirm {
 }
 
 /** Saved to localStorage. */
+export type MemberRole = 'coach' | 'player' | 'parent' | 'sub';
+
 export interface PersistedState {
-  v: 2;
-  /** Random id for this device, used for hearts and subscriptions. */
+  v: 3;
+  /** The signed-in account's id, used for hearts and subscriptions. */
   uid: string;
-  /** The team this device is connected to: the code it uses and whether it is a coach. */
-  team: { code: string; role: 'coach' | 'member' } | null;
+  /** The team this device is showing, and which of your roles on it. */
+  team: { id: string; role: MemberRole } | null;
+  /** Push notifications are switched on for this device. */
+  pushOn?: boolean;
   /** Last server version of the team document this device has seen. */
   version: number;
   /** Notifications newer than this are shown as unread. */

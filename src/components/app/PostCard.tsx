@@ -7,6 +7,7 @@ import { TYPES } from '@/lib/seed';
 import { useStore } from '@/lib/store';
 import type { Player, Post } from '@/lib/types';
 import { Icon } from '../ui';
+import { MediaView } from '../MediaView';
 
 export function PostCard({ post, P }: { post: Post; P: Record<string, Player> }) {
   const role = useStore((s) => s.role);
@@ -118,8 +119,7 @@ export function PostCard({ post, P }: { post: Post; P: Record<string, Player> })
               }}
             >
               {m.src ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={m.src} alt="" className="media-img" />
+                <MediaView src={m.src} kind={m.kind} />
               ) : (
                 <span className="media-label">{m.label || 'bilde'}</span>
               )}

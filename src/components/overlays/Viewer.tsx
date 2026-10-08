@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { stripe } from '@/lib/format';
 import { useStore } from '@/lib/store';
 import { Icon } from '../ui';
+import { MediaView } from '../MediaView';
 
 const navBtn: React.CSSProperties = {
   position: 'absolute',
@@ -59,12 +60,11 @@ export function Viewer() {
       <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingBottom: 24 }}>
         <div style={{ position: 'relative', width: '100%', maxWidth: 640, aspectRatio: '4/5', maxHeight: '100%', background: stripe(m.hue ?? 20, true) }}>
           {m.src ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={m.src} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: '#0c0809' }} />
+            <MediaView key={m.src} src={m.src} kind={m.kind} fit="contain" controls autoPlay style={{ background: '#0c0809' }} />
           ) : (
             <span style={{ position: 'absolute', left: 12, bottom: 12, font: '400 12px var(--mono)', color: 'rgba(255,255,255,.7)' }}>{m.label || 'bilde'}</span>
           )}
-          {m.kind === 'video' && (
+          {m.kind === 'video' && !m.src && (
             <span style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
               <span style={{ width: 72, height: 72, borderRadius: '50%', background: 'rgba(0,0,0,.55)', display: 'grid', placeItems: 'center' }}>
                 <Icon name="play_arrow" size={42} filled />

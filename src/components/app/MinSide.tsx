@@ -1,12 +1,14 @@
 'use client';
 
-import type { FormEvent, ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { CKEYS, ROLE_SWITCHER, TYPES } from '@/lib/seed';
 import { firstName, fmtShort, initials, inviteLink, nextChargeText, rel, stripe } from '@/lib/format';
 import { codes, coachName, matchTitle, playerMap, priceText, teamName } from '@/lib/selectors';
 import { useStore } from '@/lib/store';
+import { disablePush, enablePush, needsHomeScreen, updatePushPrefs } from '@/lib/push';
 import type { Consent, Player } from '@/lib/types';
 import { Icon, SwitchRow } from '../ui';
+import { MediaView } from '../MediaView';
 
 export const METHOD_NAMES = (last4: string) => ({
   card: 'Kort •••• ' + (last4 || '4242'),
@@ -129,6 +131,8 @@ export function MinSide() {
       {role === 'player' && me && <PlayerSections me={me} />}
       {role === 'parent' && child && <ParentSections child={child} />}
 
+      <PushSection />
+
       <div className="list" style={{ marginTop: 28 }}>
         <SwitchRow label="Mørk modus" on={theme === 'dark'} onToggle={st.toggleTheme} />
       </div>
@@ -142,7 +146,7 @@ export function MinSide() {
               Last inn eksempeldata
             </button>
           )}
-          <button type="button" className="link-btn quiet" onClick={st.logout}>
+          <button type="button" className="link-btn quiet" onClick={st.switchRole}>
             Bytt rolle
           </button>
         </div>
@@ -233,8 +237,6 @@ function SubSections() {
   const st = useStore();
   const sub = st.prof.sub;
   const mine = (st.data.payments || []).filter((p) => p.subId === 'sub-' + st.uid);
-  const nf = sub.notify || { posts: true, matches: true, results: true };
-  const setN = (k: keyof typeof nf) => () => st.setProf('sub', { notify: { ...nf, [k]: !nf[k] } });
   const methodText =
     METHOD_NAMES(sub.last4)[sub.method] + (sub.autoRenew === false ? ' · uten automatisk trekk' : ' · automatisk trekk');
   return (
@@ -261,13 +263,6 @@ function SubSections() {
             </span>
             <Icon name="chevron_right" className="chev" size={20} />
           </button>
-        </div>
-      </Section>
-      <Section title="Varsler">
-        <div>
-          <SwitchRow label="Nye innlegg" sub="Når laget legger ut bilder" on={nf.posts} onToggle={setN('posts')} />
-          <SwitchRow label="Kamper" sub="Påminnelse før kampstart" on={nf.matches} onToggle={setN('matches')} />
-          <SwitchRow label="Resultater" sub="Når et resultat er lagt inn" on={nf.results} onToggle={setN('results')} />
         </div>
       </Section>
       {sub.cancelled ? (
@@ -378,8 +373,7 @@ function ParentSections({ child }: { child: Player }) {
                       background: m ? stripe(m.hue ?? 20, theme === 'dark') : 'var(--surface2)',
                     }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    {m?.src && <img src={m.src} alt="" className="media-img" />}
+                    {m?.src && <MediaView src={m.src} kind={m.kind} />}
                   </span>
                   <span className="row-text">
                     <span style={{ font: '500 15px/1.3 var(--body)' }}>
@@ -462,5 +456,66 @@ function ParentSections({ child }: { child: Player }) {
         </Section>
       )}
     </>
+  );
+}
+
+const PUSH_MSG: Record<string, string> = {
+  denied: 'Varsler er blokkert. Slå dem på for denne siden i innstillingene til nettleseren.',
+  unsupported: 'Denne nettleseren støtter ikke varsler.',
+  error: 'Fikk ikke slått på varsler. Prøv igjen.',
+};
+
+/** Push notifications on this phone, and which kinds to get. */
+function PushSection() {
+  const st = useStore();
+  const [busy, setBusy] = useState(false);
+  const team = st.team;
+  const on = !!st.pushOn;
+  const nf = st.prof.sub.notify || { posts: true, matches: true, results: true };
+  const homeScreen = needsHomeScreen();
+  if (!team) return null;
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    if (on) {
+      await disablePush();
+      useStore.setState({ pushOn: false });
+      st.toast('Varsler er slått av på denne enheten');
+    } else {
+      const res = await enablePush(team.id, nf);
+      if (res === 'ok') {
+        useStore.setState({ pushOn: true });
+        st.toast('Varsler er slått på');
+      } else if (res !== 'homescreen') st.toast(PUSH_MSG[res]);
+    }
+    setBusy(false);
+  };
+  const setPref = (k: keyof typeof nf) => () => {
+    const next = { ...nf, [k]: !nf[k] };
+    st.setProf('sub', { notify: next });
+    void updatePushPrefs(team.id, next);
+  };
+
+  return (
+    <Section title="Varsler">
+      {homeScreen ? (
+        <p className="note">
+          På iPhone må appen ligge på Hjem-skjermen for å få varsler. Trykk på Del-knappen i Safari, velg «Legg til på Hjem-skjerm», og åpne
+          appen derfra.
+        </p>
+      ) : (
+        <div>
+          <SwitchRow label="Varsler på denne mobilen" sub="Du får beskjed når treneren legger ut noe" on={on} onToggle={toggle} disabled={busy} />
+          {on && (
+            <>
+              <SwitchRow label="Nye innlegg" sub="Bilder, video og beskjeder" on={nf.posts} onToggle={setPref('posts')} />
+              <SwitchRow label="Kamper" sub="Når en ny kamp blir lagt inn" on={nf.matches} onToggle={setPref('matches')} />
+              <SwitchRow label="Resultater" sub="Når et resultat er lagt inn" on={nf.results} onToggle={setPref('results')} />
+            </>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }

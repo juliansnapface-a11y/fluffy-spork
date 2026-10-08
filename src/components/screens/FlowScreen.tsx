@@ -3,7 +3,6 @@
 import type { FormEvent } from 'react';
 import { NB } from '@/lib/format';
 import { ROLES } from '@/lib/seed';
-import { teamName } from '@/lib/selectors';
 import { useStore } from '@/lib/store';
 import type { Screen } from '@/lib/types';
 import { Checkbox, ChevronRow, Field, Icon, TopBar } from '../ui';
@@ -74,7 +73,7 @@ export function FlowScreen() {
         {btn && (
           <div className="sticky-action">
             <button type="submit" className={'btn btn-primary btn-block' + (dim ? ' btn-dim' : '')}>
-              {flow.busy ? 'Sjekker koden …' : btn}
+              {flow.busy ? (screen === 'login' ? 'Sender kode …' : 'Et øyeblikk …') : btn}
             </button>
           </div>
         )}
@@ -157,9 +156,9 @@ function PlayerKind() {
 function Login() {
   return (
     <>
-      <Intro title="Logg inn" text="Vi sender deg en engangskode. Ingen passord å huske." />
-      <Field label="E-post eller mobilnummer">
-        <FlowInput field="contact" autoFocus autoComplete="username" placeholder="navn@epost.no" />
+      <Intro title="Logg inn" text="Vi sender en kode til e-posten din. Ingen passord å huske." />
+      <Field label="E-post">
+        <FlowInput field="contact" type="email" inputMode="email" autoFocus autoComplete="email" placeholder="navn@epost.no" />
       </Field>
     </>
   );
@@ -169,7 +168,7 @@ function Otp() {
   const contact = useStore((s) => s.flow.contact);
   const otp = useStore((s) => s.flow.otp);
   const setOtp = useStore((s) => s.setOtp);
-  const toast = useStore((s) => s.toast);
+  const resendCode = useStore((s) => s.resendCode);
   const active = Math.min(otp.length, 5);
   return (
     <>
@@ -204,8 +203,8 @@ function Otp() {
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.01, border: 'none', fontSize: 16, cursor: 'text' }}
         />
       </div>
-      <p className="note">I demoen fungerer alle 6 sifre.</p>
-      <button type="button" className="link-btn start" onClick={() => toast('Ny kode er sendt')}>
+      <p className="note">Finner du ikke e-posten? Se i søppelpost eller reklame.</p>
+      <button type="button" className="link-btn start" onClick={() => void resendCode()}>
         Send ny kode
       </button>
     </>
@@ -224,9 +223,9 @@ function TeamCode() {
 }
 
 function PickPlayer() {
-  const players = useStore((s) => s.data.players);
   const flow = useStore((s) => s.flow);
-  const name = useStore(teamName);
+  const players = flow.peek?.players || [];
+  const name = flow.peek?.teamName || '';
   const setFlow = useStore((s) => s.setFlow);
   const q = flow.search.trim().toLowerCase();
   const list = players.filter((p) => !q || p.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, NB));
@@ -272,8 +271,8 @@ function Invite() {
 
 function Terms() {
   const flow = useStore((s) => s.flow);
-  const players = useStore((s) => s.data.players);
-  const name = useStore(teamName);
+  const players = flow.peek?.players || [];
+  const name = flow.peek?.teamName || '';
   const setFlow = useStore((s) => s.setFlow);
   const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name, NB));
   return (
