@@ -223,7 +223,7 @@ export function CoachConsent() {
   const st = useStore();
   const c = st.pcons || { step: 1, p: null, ps: null, err: '' };
   const name = st.flow.coachName.trim() || st.flow.contact || '';
-  const team = c.mode === 'create' ? c.pending?.n || '' : teamName(st);
+  const team = c.mode === 'create' ? c.pending?.n || '' : st.flow.peek?.teamName || teamName(st);
   const incomplete = !c.p || (c.p === 'yes' && !c.ps);
   return (
     <div className="fullscreen">

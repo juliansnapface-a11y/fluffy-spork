@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { registerWorker } from '@/lib/push';
 import { startPersistence, useStore } from '@/lib/store';
+import { currentSession } from '@/lib/supabase';
 import { AppShell } from './app/AppShell';
 import { CoachConsent, ParentConsent, PlayerConsent } from './overlays/Consent';
 import { Payment } from './overlays/Payment';
@@ -22,6 +24,12 @@ export default function InnerCircleApp() {
   const [, setTick] = useState(0);
 
   useEffect(() => startPersistence(), []);
+
+  // The signed-in account (hearts and subscriptions are tied to it), and the push worker.
+  useEffect(() => {
+    void currentSession().then((u) => u && useStore.setState({ uid: u.id }));
+    void registerWorker();
+  }, []);
 
   // Pick up changes others make: check every 8 seconds and whenever the app comes back into view.
   useEffect(() => {

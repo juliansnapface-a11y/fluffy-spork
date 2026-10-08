@@ -15,7 +15,7 @@ import type {
   TeamData,
 } from './types';
 
-export const LS_KEY = 'innercircle.v2';
+export const LS_KEY = 'innercircle.v3';
 export const DEFAULT_TEAM = 'Laget';
 export const COACH = 'Trener';
 export const DEFAULT_PRICE = 20;
@@ -222,7 +222,7 @@ export function freshState(): PersistedState {
     dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   } catch {}
   return {
-    v: 2,
+    v: 3,
     uid: newId(),
     team: null,
     version: 0,
